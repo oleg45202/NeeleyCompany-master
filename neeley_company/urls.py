@@ -16,12 +16,16 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
-from . import views
-
+from django.conf import settings
+from django.conf.urls import url
+from django.contrib import admin
+from django.urls import path, include
+from django.views.static import serve
 urlpatterns = [
-    path("admin/", admin.site.urls),
-    path("projects/", include("projects.urls")),
+    path('admin/', admin.site.urls),
+    path('', include('blog.urls')),
     path("blog/", include("blog.urls")),
-    path('', views.index, name='index')
+    url(r'^static/(?P<path>.*)$', serve, {'document_root': settings.STATIC_ROOT})
+
     # path("", include("projects.urls")),
 ]

@@ -1,35 +1,44 @@
-from django.shortcuts import render, get_object_or_404
-from blog.models import Post, Comment
-from blog.forms import CommentForm
+from datetime import timedelta
+
+import asyncio
+from django.conf import settings
+from django.http import HttpResponse
+from django.shortcuts import render
+from django.utils.decorators import classonlymethod
+from django.views import View
+from ipware import get_client_ip
+from redis import Redis
+
+redis_default = Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB)
+key = 'PING'
+limit = 10
+period = timedelta(seconds=10)
 
 
-def blog_index(request):
-    posts = Post.objects.all().order_by("-created_on")
-    context = {"posts": posts}
-    return render(request, "blog_index.html", context)
+def request_is_limited(red: Redis, redis_key: str, redis_limit: int, redis_period: timedelta):
+    if red.setnx(redis_key, redis_limit):
+        red.expire(redis_key, int(redis_period.total_seconds()))
+    bucket_val = red.get(redis_key)
+    if bucket_val and int(bucket_val) > 0:
+        red.decrby(redis_key, 1)
+        return False
+    return True
 
 
-def blog_category(request, category):
-    posts = Post.objects.filter(categories__name__contains=category).order_by(
-        "-created_on"
-    )
-    context = {"category": category, "posts": posts}
-    return render(request, "blog_category.html", context)
+class GetPongView(View):
+    @classonlymethod
+    def as_view(cls, **initkwargs):
+        view = super().as_view(**initkwargs)
+        view._is_coroutine = asyncio.coroutines._is_coroutine
+        return view
+
+    async def get(self, request, *args, **kwargs):
+        ip, is_routable = get_client_ip(request)
+        if request_is_limited(redis_default,  '%s:%s' % (ip, key), limit, period):
+            return HttpResponse("Too many requests, please try again later.", status=429)
+        return HttpResponse("PONG", status=200)
 
 
-def blog_detail(request, pk):
-    post = get_object_or_404(Post, pk=pk)
-    form = CommentForm()
-    if request.method == "POST":
-        form = CommentForm(request.POST)
-        if form.is_valid():
-            comment = Comment(
-                author=form.cleaned_data["author"],
-                body=form.cleaned_data["body"],
-                post=post,
-            )
-            comment.save()
-    comments = Comment.objects.filter(post=post)
-    context = {"post": post, "comments": comments, "form": CommentForm()}
-
-    return render(request, "post_detail.html", context)
+def index(request):
+    context = {}
+    return render(request, 'index.html', context)
